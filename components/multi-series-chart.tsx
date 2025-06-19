@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect, useMemo, useCallback } from "react"
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import {
   LineChart,
   Line,
@@ -62,7 +62,6 @@ interface MultiSeriesChartProps {
     unit: string
   }>
   height?: number
-  dateRange: [Date, Date]
 }
 
 export function MultiSeriesChart({
@@ -70,10 +69,17 @@ export function MultiSeriesChart({
   biomarkers,
   height = 400,
 }: MultiSeriesChartProps) {
-  const [selectedBiomarker, setSelectedBiomarker] = useState<string | null>(null)
+  const [activeBiomarkers, setActiveBiomarkers] = useState<string[]>([])
   const [isMobile, setIsMobile] = useState(false)
   const [chartHeight, setChartHeight] = useState(height)
   const [zoomDomain, setZoomDomain] = useState<{ startIndex?: number; endIndex?: number }>({})
+  const chartRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (biomarkers && biomarkers.length > 0) {
+      setActiveBiomarkers([biomarkers[0].name])
+    }
+  }, [biomarkers])
 
   // Handle mobile responsiveness
   useEffect(() => {
@@ -90,101 +96,121 @@ export function MultiSeriesChart({
 
   // Process data for chart
   const combinedData = useMemo(() => {
-    if (!biomarkers[0]?.data) return []
-    
-    return biomarkers[0].data.map((_, index) => {
-      const dataPoint: Record<string, string | number> = {
-        date: biomarkers[0].data[index].date,
-        formattedDate: new Date(biomarkers[0].data[index].date).toLocaleDateString("en-US", {
-          year: "numeric",
-          month: isMobile ? "short" : "long",
-          day: "numeric",
-        }),
-      }
+    const dataMap = new Map<string, Record<string, unknown>>()
 
-      biomarkers.forEach((biomarker) => {
-        if (biomarker.data[index]) {
-          dataPoint[biomarker.name] = biomarker.data[index].value
-          dataPoint[`${biomarker.name}_status`] = biomarker.data[index].status
+    biomarkers.forEach(biomarker => {
+      biomarker.data.forEach(dataPoint => {
+        const { date, value, status } = dataPoint as { date: string; value: number; status: string };
+        const dateStr = new Date(date).toISOString().split('T')[0];
+        if (!dataMap.has(dateStr)) {
+          dataMap.set(dateStr, {
+            date: dateStr,
+            formattedDate: new Date(date).toLocaleDateString("en-US", {
+              year: "numeric",
+              month: isMobile ? "short" : "long",
+              day: "numeric",
+            }),
+          });
         }
-      })
+        const entry = dataMap.get(dateStr)!;
+        entry[biomarker.name] = value;
+        entry[`${biomarker.name}_status`] = status;
+      });
+    });
 
-      return dataPoint
-    })
+    return Array.from(dataMap.values()).sort((a, b) => new Date(a.date as string).getTime() - new Date(b.date as string).getTime())
   }, [biomarkers, isMobile])
 
   // Calculate Y-axis domain
   const yDomain = useMemo(() => {
-    const allValues = biomarkers.reduce((acc, biomarker) => {
-      if (selectedBiomarker === biomarker.name) {
-        const dataValues = biomarker.data.map(d => d.value);
+    const allValues = biomarkers
+      .filter(b => activeBiomarkers.includes(b.name))
+      .reduce((acc, biomarker) => {
+        const dataValues = biomarker.data.map(d => d.value)
         if (biomarker.referenceRange) {
-          const rangeValues = [biomarker.referenceRange.min, biomarker.referenceRange.max];
+          const rangeValues = [biomarker.referenceRange.min, biomarker.referenceRange.max]
           if (biomarker.referenceRange.optimal) {
-            rangeValues.push(biomarker.referenceRange.optimal);
+            rangeValues.push(biomarker.referenceRange.optimal)
           }
-          return acc.concat(dataValues, rangeValues);
+          return acc.concat(dataValues, rangeValues)
         }
-        return acc.concat(dataValues);
-      }
-      return acc;
-    }, [] as number[]);
+        return acc.concat(dataValues)
+      }, [] as number[])
 
     if (allValues.length === 0) {
-      return [0, 100] as [number, number];
+      const activeBiomarker = biomarkers.find(b => b.name === activeBiomarkers[0])
+      if (activeBiomarker) {
+        return [activeBiomarker.referenceRange.min * 0.9, activeBiomarker.referenceRange.max * 1.1]
+      }
+      return [0, 100] as [number, number]
     }
 
-    const min = Math.min(...allValues);
-    const max = Math.max(...allValues);
-    const padding = (max - min) * 0.1;
+    const min = Math.min(...allValues)
+    const max = Math.max(...allValues)
+    const padding = (max - min) * 0.2
 
-    return [min - padding, max + padding] as [number, number];
-  }, [biomarkers, selectedBiomarker]);
+    return [min - padding, max + padding] as [number, number]
+  }, [biomarkers, activeBiomarkers])
 
-  // Zoom controls
-  const handleZoomReset = useCallback(() => {
-    setZoomDomain({})
-    setChartHeight(height)
-  }, [height])
+  const handleBiomarkerToggle = (biomarkerName: string) => {
+    setActiveBiomarkers(prev => {
+      if (prev.includes(biomarkerName)) {
+        return prev.filter(b => b !== biomarkerName)
+      } else {
+        return [...prev, biomarkerName]
+      }
+    })
+  }
 
-  const handleZoomIn = useCallback(() => {
-    if (combinedData.length === 0) return
+  const handleDownloadPNG = useCallback(() => {
+    if (!chartRef.current) return;
     
-    const currentStart = zoomDomain.startIndex ?? 0
-    const currentEnd = zoomDomain.endIndex ?? combinedData.length - 1
-    const currentRange = currentEnd - currentStart
-    
-    const newRange = Math.max(2, Math.floor(currentRange * 0.7))
-    const midPoint = Math.floor((currentStart + currentEnd) / 2)
-    
-    const start = Math.max(0, midPoint - Math.floor(newRange / 2))
-    const end = Math.min(combinedData.length - 1, start + newRange)
-    
-    setZoomDomain({ startIndex: start, endIndex: end })
-    setChartHeight(prev => Math.max(200, prev * 0.8))
-  }, [combinedData.length, zoomDomain])
+    try {
+      // Create a canvas element
+      const svgElement = chartRef.current.querySelector('svg');
+      if (!svgElement) return;
 
-  const handleZoomOut = useCallback(() => {
-    if (combinedData.length === 0) return
-    
-    const currentStart = zoomDomain.startIndex ?? 0
-    const currentEnd = zoomDomain.endIndex ?? combinedData.length - 1
-    const currentRange = currentEnd - currentStart
-    
-    const newRange = Math.min(combinedData.length, Math.ceil(currentRange / 0.7))
-    const midPoint = Math.floor((currentStart + currentEnd) / 2)
-    
-    const start = Math.max(0, midPoint - Math.floor(newRange / 2))
-    const end = Math.min(combinedData.length - 1, start + newRange)
-    
-    if (end - start >= combinedData.length - 1) {
-      handleZoomReset()
-      return
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      // Set canvas dimensions
+      const svgRect = svgElement.getBoundingClientRect();
+      canvas.width = svgRect.width;
+      canvas.height = svgRect.height;
+
+      // Convert SVG to string
+      const svgString = new XMLSerializer().serializeToString(svgElement);
+      const svg = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(svg);
+
+      // Create image from SVG
+      const img = new Image();
+      img.onload = () => {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+        
+        // Convert to PNG and download
+        const pngUrl = canvas.toDataURL('image/png');
+        const link = document.createElement('a');
+        link.download = `${title.replace(/\s+/g, '-')}-chart.png`;
+        link.href = pngUrl;
+        link.click();
+        
+        // Cleanup
+        URL.revokeObjectURL(url);
+      };
+      img.src = url;
+    } catch (error) {
+      console.error('Error generating PNG:', error);
     }
-    
-    setZoomDomain({ startIndex: start, endIndex: end })
-    setChartHeight(prev => Math.min(height * 2, prev * 1.2))
-  }, [combinedData.length, zoomDomain, handleZoomReset, height])
+  }, [title]);
+
+  // Reset zoom when data changes
+  useEffect(() => {
+    setZoomDomain({});
+  }, [combinedData]);
 
   return (
     <Card className="w-full">
@@ -195,26 +221,10 @@ export function MultiSeriesChart({
             <Button
               variant="outline"
               size="sm"
-              onClick={handleZoomIn}
-              disabled={combinedData.length < 2}
+              onClick={handleDownloadPNG}
+              disabled={!combinedData.length}
             >
-              Zoom In
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleZoomOut}
-              disabled={combinedData.length < 2}
-            >
-              Zoom Out
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleZoomReset}
-              disabled={combinedData.length < 2}
-            >
-              Reset
+              Download Graph
             </Button>
           </div>
         </div>
@@ -224,14 +234,14 @@ export function MultiSeriesChart({
           {biomarkers.map((biomarker) => (
             <Badge
               key={biomarker.name}
-              variant={selectedBiomarker === biomarker.name ? "default" : "outline"}
+              variant={activeBiomarkers.includes(biomarker.name) ? "default" : "outline"}
               className="cursor-pointer hover:scale-105 transition-transform"
               style={{
-                backgroundColor: selectedBiomarker === biomarker.name ? biomarker.color : "transparent",
+                backgroundColor: activeBiomarkers.includes(biomarker.name) ? biomarker.color : "transparent",
                 borderColor: biomarker.color,
-                color: selectedBiomarker === biomarker.name ? "white" : biomarker.color,
+                color: activeBiomarkers.includes(biomarker.name) ? "white" : biomarker.color,
               }}
-              onClick={() => setSelectedBiomarker(biomarker.name)}
+              onClick={() => handleBiomarkerToggle(biomarker.name)}
             >
               {biomarker.name}
             </Badge>
@@ -239,7 +249,7 @@ export function MultiSeriesChart({
         </div>
       </CardHeader>
 
-      <CardContent>
+      <CardContent ref={chartRef}>
         <div
           className={`chart-container bg-white ${isMobile ? 'p-1' : 'p-4'} rounded-lg`}
           style={{
@@ -253,98 +263,80 @@ export function MultiSeriesChart({
           <ResponsiveContainer width="100%" height={chartHeight}>
             <LineChart
               data={combinedData}
-              margin={{ top: 20, right: isMobile ? 10 : 30, left: isMobile ? 10 : 20, bottom: 60 }}
+              margin={{
+                top: 5,
+                right: isMobile ? 10 : 30,
+                left: isMobile ? -10 : 20,
+                bottom: 5,
+              }}
             >
-              <CartesianGrid strokeDasharray="3 3" opacity={0.2} />
-              <XAxis
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis 
                 dataKey="formattedDate"
-                angle={-45}
-                textAnchor="end"
-                height={70}
-                tick={{ fontSize: isMobile ? 12 : 12, fontWeight: isMobile ? 600 : 400 }}
-                interval={isMobile ? 0 : 0}
-                domain={['auto', 'auto']}
-                allowDataOverflow
+                angle={isMobile ? -45 : 0}
+                textAnchor={isMobile ? "end" : "middle"}
+                height={isMobile ? 60 : 30}
+                interval="preserveStartEnd"
               />
               <YAxis
-                tick={{ fontSize: isMobile ? 12 : 12, fontWeight: isMobile ? 600 : 400 }}
-                width={isMobile ? 40 : 60}
                 domain={yDomain}
-                allowDataOverflow
+                width={isMobile ? 30 : 50}
+                tick={{ fontSize: isMobile ? 10 : 12 }}
               />
-              <Tooltip
-                content={<CustomTooltip />}
-                wrapperStyle={{ fontSize: isMobile ? 12 : 12, fontWeight: isMobile ? 600 : 400 }}
-              />
-              <Legend
-                verticalAlign="top"
-                height={36}
-                wrapperStyle={{ fontSize: isMobile ? 12 : 12, fontWeight: isMobile ? 600 : 400 }}
-              />
-              {biomarkers.map((biomarker) => {
-                if (selectedBiomarker === biomarker.name) {
-                  return [
-                    <Line
-                      key={biomarker.name}
-                      type="monotone"
-                      dataKey={biomarker.name}
-                      stroke={biomarker.color}
-                      strokeWidth={2}
-                      dot={{ r: 4 }}
-                      activeDot={{ r: 6 }}
-                      name={`${biomarker.name} (${biomarker.unit})`}
-                      isAnimationActive={false}
-                    />,
-                    biomarker.referenceRange && (
-                      <ReferenceArea
-                        key={`${biomarker.name}-range`}
-                        y1={biomarker.referenceRange.min}
-                        y2={biomarker.referenceRange.max}
-                        fill={biomarker.color}
-                        fillOpacity={0.1}
-                      />
-                    ),
-                    biomarker.referenceRange && (
-                      <ReferenceLine
-                        key={`${biomarker.name}-min`}
-                        y={biomarker.referenceRange.min}
-                        stroke={biomarker.color}
-                        strokeDasharray="3 3"
-                        opacity={0.5}
-                      />
-                    ),
-                    biomarker.referenceRange && (
-                      <ReferenceLine
-                        key={`${biomarker.name}-max`}
-                        y={biomarker.referenceRange.max}
-                        stroke={biomarker.color}
-                        strokeDasharray="3 3"
-                        opacity={0.5}
-                      />
-                    ),
-                    biomarker.referenceRange?.optimal && (
-                      <ReferenceLine
-                        key={`${biomarker.name}-optimal`}
-                        y={biomarker.referenceRange.optimal}
-                        stroke={biomarker.color}
-                        strokeDasharray="5 5"
-                        opacity={0.8}
-                      />
-                    ),
-                  ]
-                }
-                return null
-              })}
-              <Brush
-                dataKey="formattedDate"
-                height={30}
-                stroke="#8884d8"
-                startIndex={zoomDomain.startIndex}
-                endIndex={zoomDomain.endIndex}
-                onChange={(domain) => {
-                  setZoomDomain(domain)
-                }}
-              />
+              <Tooltip content={<CustomTooltip />} />
+              <Legend />
+              {biomarkers.map((biomarker) =>
+                activeBiomarkers.includes(biomarker.name) && (
+                  <Line
+                    key={biomarker.name}
+                    type="monotone"
+                    dataKey={biomarker.name}
+                    stroke={biomarker.color}
+                    strokeWidth={2}
+                    dot={{ r: 4 }}
+                    activeDot={{ r: 8 }}
+                    name={biomarker.name}
+                  />
+                )
+              )}
+              {activeBiomarkers.length === 1 && biomarkers.find(b => b.name === activeBiomarkers[0])?.referenceRange && (
+                <>
+                  <ReferenceArea
+                    y1={biomarkers.find(b => b.name === activeBiomarkers[0])!.referenceRange.min}
+                    y2={biomarkers.find(b => b.name === activeBiomarkers[0])!.referenceRange.max}
+                    stroke="transparent"
+                    fill="green"
+                    fillOpacity={0.1}
+                  />
+                  {biomarkers.find(b => b.name === activeBiomarkers[0])!.referenceRange.optimal && (
+                    <ReferenceLine
+                      y={biomarkers.find(b => b.name === activeBiomarkers[0])!.referenceRange.optimal}
+                      label="Optimal"
+                      stroke="green"
+                      strokeDasharray="3 3"
+                    />
+                  )}
+                </>
+              )}
+              {combinedData.length > 1 && (
+                <Brush
+                  dataKey="formattedDate"
+                  height={30}
+                  stroke="#8884d8"
+                  startIndex={zoomDomain.startIndex}
+                  endIndex={zoomDomain.endIndex}
+                  onChange={(domain) => {
+                    if (domain && 
+                        typeof domain.startIndex === 'number' && 
+                        typeof domain.endIndex === 'number') {
+                      setZoomDomain({
+                        startIndex: domain.startIndex,
+                        endIndex: domain.endIndex
+                      });
+                    }
+                  }}
+                />
+              )}
             </LineChart>
           </ResponsiveContainer>
         </div>
