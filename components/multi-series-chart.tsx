@@ -54,7 +54,7 @@ interface MultiSeriesChartProps {
     name: string
     data: Array<{
       date: string
-      value: number
+      value: number | null
       status: string
     }>
     color: string
@@ -69,6 +69,7 @@ export function MultiSeriesChart({
   biomarkers,
   height = 400,
 }: MultiSeriesChartProps) {
+  console.log('MultiSeriesChart received biomarkers:', biomarkers);
   const [activeBiomarkers, setActiveBiomarkers] = useState<string[]>([])
   const [isMobile, setIsMobile] = useState(false)
   const [chartHeight, setChartHeight] = useState(height)
@@ -96,11 +97,12 @@ export function MultiSeriesChart({
 
   // Process data for chart
   const combinedData = useMemo(() => {
+    console.log('Recalculating combinedData in MultiSeriesChart. New biomarkers:', biomarkers);
     const dataMap = new Map<string, Record<string, unknown>>()
 
     biomarkers.forEach(biomarker => {
       biomarker.data.forEach(dataPoint => {
-        const { date, value, status } = dataPoint as { date: string; value: number; status: string };
+        const { date, value, status } = dataPoint as { date: string; value: number | null; status: string };
         const dateStr = new Date(date).toISOString().split('T')[0];
         if (!dataMap.has(dateStr)) {
           dataMap.set(dateStr, {
@@ -126,7 +128,7 @@ export function MultiSeriesChart({
     const allValues = biomarkers
       .filter(b => activeBiomarkers.includes(b.name))
       .reduce((acc, biomarker) => {
-        const dataValues = biomarker.data.map(d => d.value)
+        const dataValues = biomarker.data.map(d => d.value).filter((value): value is number => value !== null)
         if (biomarker.referenceRange) {
           const rangeValues = [biomarker.referenceRange.min, biomarker.referenceRange.max]
           if (biomarker.referenceRange.optimal) {

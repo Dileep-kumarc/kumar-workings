@@ -16,9 +16,14 @@ interface HealthInsightsProps {
   biomarkerData: {
     [key: string]: BiomarkerData
   }
+  uploadedReportMetadata?: {
+    biomarkers: Record<string, any>;
+    report_date?: string;
+    [key: string]: any; // Allow other properties from ExtractedData
+  };
 }
 
-export function HealthInsights({ patientInfo, biomarkerData }: HealthInsightsProps) {
+export function HealthInsights({ patientInfo, biomarkerData, uploadedReportMetadata }: HealthInsightsProps) {
   const insights = [
     {
       type: "critical",
@@ -132,9 +137,9 @@ export function HealthInsights({ patientInfo, biomarkerData }: HealthInsightsPro
                   />
                 </div>
                 <p className="text-sm text-gray-600 mt-2">
-                  Based on {Object.keys(biomarkerData).length} biomarkers from real patient reports
+                  Based on {uploadedReportMetadata?.biomarkers ? Object.keys(uploadedReportMetadata.biomarkers).length : Object.keys(biomarkerData).length} biomarkers from real patient reports
                 </p>
-                <p className="text-xs text-gray-500 mt-1">Source: Reports 1726238851863, AD231201100076582949</p>
+                <p className="text-xs text-gray-500 mt-1">Source: Reports {uploadedReportMetadata?.report_date || "Initial Data"}</p>
               </div>
             </div>
           </CardContent>

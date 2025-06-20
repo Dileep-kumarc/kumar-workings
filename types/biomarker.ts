@@ -38,3 +38,19 @@ export interface BiomarkerData {
     optimal?: number;
   };
 }
+
+// New interface for chart data points where value is strictly a number
+export interface ChartDataPoint {
+  date: string;
+  value: number; // Must be a number for chart rendering
+  status: string;
+  formattedDate?: string; // Optional: if needed for XAxis or tooltips
+}
+
+export interface BiomarkerSummary {
+  name: string;
+  data: ChartDataPoint[];
+  color: string;
+  referenceRange: { min: number; max: number; optimal?: number };
+  unit: string;
+}
