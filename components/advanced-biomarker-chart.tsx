@@ -40,6 +40,9 @@ export function AdvancedBiomarkerChart({ biomarker }: AdvancedBiomarkerChartProp
     const latest = history[history.length - 1].value
     const previous = history[history.length - 2].value
 
+    // Ensure latest and previous are not null before comparison
+    if (latest === null || previous === null) return false;
+
     // For biomarkers where lower is better
     if (
       (name.includes("Cholesterol") && name !== "HDL Cholesterol") ||

@@ -17,10 +17,10 @@ interface HealthInsightsProps {
     [key: string]: BiomarkerData
   }
   uploadedReportMetadata?: {
-    biomarkers: Record<string, any>;
+    biomarkers: Record<string, unknown>;
     report_date?: string;
-    [key: string]: any; // Allow other properties from ExtractedData
-  };
+    [key: string]: unknown;
+  } | null;
 }
 
 export function HealthInsights({ patientInfo, biomarkerData, uploadedReportMetadata }: HealthInsightsProps) {

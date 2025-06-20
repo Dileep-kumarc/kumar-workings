@@ -86,6 +86,14 @@ The EcoTown Health Dashboard is a comprehensive, mobile-responsive healthcare an
 - **Interactive Tooltips**: Detailed values with clinical status
 - **Zoom & Pan**: Touch-friendly detailed analysis
 - **Export Options**: PNG and PDF for clinical documentation
+### ⬆️ How to Upload a Report
+
+To upload a new patient report and update the dashboard:
+1.  Click the "Upload Report" button in the header.
+2.  A file selection dialog will appear.
+3.  Select a PDF file containing the patient's biomarker data.
+4.  The system will process the PDF, extract the relevant biomarker information, and dynamically update the dashboard with the new data.
+5.  You will see a confirmation message and the "Last Uploaded Report" summary will appear with details about the extracted biomarkers and timestamp.
 
 ### 🤖 AI-Powered Health Insights
 - **Dynamic Health Score**: Algorithm-based assessment (currently 70%)
@@ -152,6 +160,11 @@ http://localhost:3000
 ```
 
 ### Production Deployment
+
+This project is deployed with:
+- **Frontend**: Hosted on Vercel
+- **Backend**: Hosted on Railway
+
 ```bash
 # Build for production
 npm run build

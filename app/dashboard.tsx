@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useCallback, useMemo } from 'react'
 import { motion } from "framer-motion"
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -13,18 +13,16 @@ import { ClinicalInterpretationGuide } from '@/components/clinical-interpretatio
 import { UploadReport } from '@/components/upload-report'
 import { getDynamicBiomarkerGroups } from '@/utils/biomarker-utils'
 import { realBiomarkerData as initialBiomarkerData, realPatientInfo as initialPatientInfo } from '@/data/real-patient-data'
-import type { BiomarkerData, PatientInfo } from '@/types/biomarker'
+import type { BiomarkerData, PatientInfo, BiomarkerStatus, BiomarkerTrend } from '@/types/biomarker'
 
 interface ExtractedData {
   patient?: PatientInfo;
   patientInfo?: PatientInfo;
-  biomarkers: Record<string, { value: string; unit: string; status?: string }>;
+  biomarkers: Record<string, { value: string; unit: string; status?: string; trend?: string }>;
   report_date?: string;
   ai_score?: number;
   timestamp?: string;
 }
-
-type BiomarkerGroup = "Lipid Profile" | "Metabolic Panel" | "Vitamins"
 
 type BiomarkerSummary = {
   name: string;
@@ -62,12 +60,11 @@ interface BiomarkerGroups {
 }
 
 export default function EcoTownHealthDashboard() {
-  const [selectedBiomarker, setSelectedBiomarker] = React.useState("Total Cholesterol")
+  const [, setSelectedBiomarker] = React.useState<string | null>(null)
   const [dateRange, setDateRange] = React.useState("all-time")
   const [showUpload, setShowUpload] = React.useState(false)
   const [selectedGroup, setSelectedGroup] = React.useState("Lipid Profile")
-  const [uploadedBiomarkerData, setUploadedBiomarkerData] = React.useState<any>(null)
-  const [forceUpdate, setForceUpdate] = React.useState(0)
+  const [uploadedBiomarkerData, setUploadedBiomarkerData] = React.useState<ExtractedData | null>(null)
   const [isUploading, setIsUploading] = React.useState(false);
   const [uploadError, setUploadError] = React.useState<string | null>(null);
 
@@ -75,7 +72,7 @@ export default function EcoTownHealthDashboard() {
   const [patientInfo, setPatientInfo] = React.useState<PatientInfo>(initialPatientInfo)
   const [biomarkerData, setBiomarkerData] = React.useState<Record<string, BiomarkerData>>(initialBiomarkerData)
 
-  const biomarkerKeys = Object.keys(biomarkerData)
+  const biomarkerKeys = useMemo(() => Object.keys(biomarkerData), [biomarkerData])
 
   // Calculate dynamic summary statistics
   const [summaryStats, setSummaryStats] = React.useState({
@@ -85,20 +82,24 @@ export default function EcoTownHealthDashboard() {
     improving: 0,
   })
 
-  const calculateSummaryStats = () => {
-    const total = biomarkerKeys.length
-    const normal = biomarkerKeys.filter((key) => biomarkerData[key].currentValue.status === "Normal").length
-    const outOfRange = biomarkerKeys.filter(
+  // Function to calculate summary statistics, not memoized with useCallback
+  const calculateStats = (keys: string[], data: Record<string, BiomarkerData>) => {
+    const total = keys.length
+    const normal = keys.filter((key) => data[key].currentValue.status === "Normal").length
+    const outOfRange = keys.filter(
       (key) =>
-        biomarkerData[key].currentValue.status === "Low" ||
-        biomarkerData[key].currentValue.status === "High" ||
-        biomarkerData[key].currentValue.status === "Critical",
+        data[key].currentValue.status === "Low" ||
+        data[key].currentValue.status === "High" ||
+        data[key].currentValue.status === "Critical",
     ).length
-    const improving = biomarkerKeys.filter((key) => {
-      const history = biomarkerData[key].history
+    const improving = keys.filter((key) => {
+      const history = data[key].history
       if (history.length < 2) return false
       const latest = history[history.length - 1].value
       const previous = history[history.length - 2].value
+
+      // Ensure latest and previous are not null before comparison
+      if (latest === null || previous === null) return false;
 
       // Improvement logic based on biomarker type
       if (key === "HDL Cholesterol" || key === "Vitamin D" || key === "Hemoglobin" || key === "Vitamin B12") {
@@ -114,15 +115,86 @@ export default function EcoTownHealthDashboard() {
       }
       return false
     }).length
-
-    setSummaryStats({ total, normal, outOfRange, improving })
+    return { total, normal, outOfRange, improving }
   }
 
   React.useEffect(() => {
-    calculateSummaryStats()
-  }, [forceUpdate, biomarkerData])
+    const stats = calculateStats(biomarkerKeys, biomarkerData);
+    setSummaryStats(stats);
+  }, [biomarkerKeys, biomarkerData])
 
-  const handleUpload = async (file: File) => {
+  const handlePDFDataExtracted = useCallback((extractedData: ExtractedData) => {
+    console.log("Extracted data received:", extractedData)
+    // Update patient info with proper date handling
+    const updatedPatientInfo = {
+      ...extractedData.patientInfo,
+      lastUpdated: extractedData.report_date || extractedData.patientInfo?.lastUpdated || new Date().toLocaleDateString('en-IN')
+    }
+
+    // Only update patient info if there's a change to prevent infinite re-renders
+    const patientInfoChanged = (
+      updatedPatientInfo.name !== patientInfo.name ||
+      updatedPatientInfo.age !== patientInfo.age ||
+      updatedPatientInfo.gender !== patientInfo.gender ||
+      updatedPatientInfo.id !== patientInfo.id ||
+      updatedPatientInfo.lastUpdated !== patientInfo.lastUpdated
+    );
+
+    if (patientInfoChanged) {
+      setPatientInfo(updatedPatientInfo as PatientInfo)
+    }
+    
+    // Optimize biomarker data update to prevent unnecessary re-renders
+    let hasBiomarkerDataChanged = false;
+    const updatedBiomarkerData = { ...biomarkerData }; // Shallow copy to start
+
+    Object.keys(extractedData.biomarkers).forEach((biomarkerName) => {
+      if (updatedBiomarkerData[biomarkerName]) {
+        hasBiomarkerDataChanged = true;
+        const newData = extractedData.biomarkers[biomarkerName];
+        console.log(`Processing biomarker: ${biomarkerName}, raw value: ${newData.value}, type: ${typeof newData.value}`);
+        
+        const rawDate = extractedData.patientInfo?.reportDate; // Use optional chaining
+        const currentDate = rawDate && !isNaN(new Date(rawDate).getTime()) ? rawDate : new Date().toISOString().split('T')[0];
+
+        const newHistoryEntry = {
+          value: !isNaN(Number.parseFloat(newData.value.toString())) ? Number.parseFloat(newData.value.toString()) : null,
+          unit: newData.unit,
+          status: (newData.status as BiomarkerStatus) || 'Unknown',
+          trend: (newData.trend as BiomarkerTrend) || 'stable',
+          date: currentDate,
+          referenceRange: updatedBiomarkerData[biomarkerName].currentValue.referenceRange,
+        };
+
+        // Create a new object for currentValue to ensure immutability
+        updatedBiomarkerData[biomarkerName] = {
+          ...updatedBiomarkerData[biomarkerName],
+          currentValue: {
+            ...updatedBiomarkerData[biomarkerName].currentValue,
+            value: newHistoryEntry.value, // Use the parsed value from newHistoryEntry
+            date: currentDate,
+            status: newHistoryEntry.status,
+          },
+          // Add to history (keep last 6 entries)
+          history: [
+            ...updatedBiomarkerData[biomarkerName].history.slice(-5),
+            newHistoryEntry,
+          ],
+        };
+      }
+    });
+
+    if (hasBiomarkerDataChanged) {
+      setBiomarkerData(updatedBiomarkerData);
+    }
+
+    setUploadedBiomarkerData(extractedData);
+    setTimeout(() => {
+      setShowUpload(false);
+    }, 3000);
+  }, [biomarkerData, setPatientInfo, setBiomarkerData, setUploadedBiomarkerData]); // Added dependencies to handlePDFDataExtracted useCallback
+
+  const handleUpload = useCallback(async (file: File) => {
     console.log("Processing uploaded file:", file.name)
     setIsUploading(true); // Set uploading state
     setUploadError(null); // Clear previous errors
@@ -160,57 +232,9 @@ export default function EcoTownHealthDashboard() {
     } finally {
       setIsUploading(false); // Reset uploading state
     }
-  }
+  }, [handlePDFDataExtracted, setIsUploading, setUploadError]); // Added dependencies to handleUpload useCallback
 
-  const handlePDFDataExtracted = (extractedData: any) => {
-    console.log("Extracted data received:", extractedData)
-    // Update patient info with proper date handling
-    const updatedPatientInfo = {
-      ...extractedData.patientInfo,
-      lastUpdated: extractedData.report_date || extractedData.patientInfo?.lastUpdated || new Date().toLocaleDateString('en-IN')
-    }
-    setPatientInfo(updatedPatientInfo)
-    // Deep clone and update biomarker data
-    const newBiomarkerData = JSON.parse(JSON.stringify(biomarkerData))
-    Object.keys(extractedData.biomarkers).forEach((biomarkerName) => {
-      if (newBiomarkerData[biomarkerName]) {
-        const newData = extractedData.biomarkers[biomarkerName]
-        console.log(`Processing biomarker: ${biomarkerName}, raw value: ${newData.value}, type: ${typeof newData.value}`);
-        const rawDate = extractedData.patientInfo.reportDate
-        const currentDate = rawDate && !isNaN(new Date(rawDate).getTime()) ? rawDate : new Date().toISOString().split('T')[0];
-        // Create new history entry
-        const newHistoryEntry = {
-          value: !isNaN(Number.parseFloat(newData.value.toString())) ? Number.parseFloat(newData.value.toString()) : null,
-          unit: newData.unit,
-          status: newData.status || 'Unknown' as any,
-          trend: "stable" as any,
-          date: currentDate,
-          referenceRange: newBiomarkerData[biomarkerName].currentValue.referenceRange,
-        }
-        // COMPLETELY REPLACE current value with extracted data
-        newBiomarkerData[biomarkerName].currentValue = {
-          ...newBiomarkerData[biomarkerName].currentValue,
-          value: !isNaN(Number.parseFloat(newData.value.toString())) ? Number.parseFloat(newData.value.toString()) : null,
-          date: currentDate,
-          status: newData.status || 'Unknown' as any,
-        }
-        // Add to history (keep last 6 entries)
-        newBiomarkerData[biomarkerName].history = [
-          ...newBiomarkerData[biomarkerName].history.slice(-5),
-          newHistoryEntry,
-        ]
-      }
-    })
-    setBiomarkerData(newBiomarkerData)
-    setUploadedBiomarkerData({ ...extractedData, timestamp: Date.now() })
-    setForceUpdate((prev) => prev + 1)
-    calculateSummaryStats()
-    setTimeout(() => {
-      setShowUpload(false)
-    }, 3000)
-  }
-
-  const handleExportReport = () => {
+  const handleExportReport = useCallback(() => {
     const reportData = {
       patient: patientInfo,
       biomarkers: biomarkerData,
@@ -240,7 +264,9 @@ export default function EcoTownHealthDashboard() {
     link.download = `ecotown-health-${patientInfo.name.replace(/\s+/g, "-")}-${new Date().toISOString().split("T")[0]}.json`
     link.click()
     URL.revokeObjectURL(url)
-  }
+  }, [patientInfo, biomarkerData, summaryStats, biomarkerKeys]); // Added dependencies to handleExportReport useCallback
+
+  const onUploadClick = useCallback(() => setShowUpload(prev => !prev), [setShowUpload]);
 
   // Type the biomarker groups
   const biomarkerGroups: BiomarkerGroups = getDynamicBiomarkerGroups(biomarkerData)
@@ -279,7 +305,7 @@ export default function EcoTownHealthDashboard() {
         patientInfo={patientInfo}
         dateRange={dateRange}
         onDateRangeChange={setDateRange}
-        onUploadClick={() => setShowUpload(!showUpload)}
+        onUploadClick={onUploadClick}
         onExportClick={handleExportReport}
         isClient={true}
       />
@@ -309,7 +335,7 @@ export default function EcoTownHealthDashboard() {
               <div className="space-y-1">
                 <h3 className="text-sm font-semibold text-gray-900 tracking-tight">Last Uploaded Report</h3>
                 <p className="text-xs sm:text-sm text-gray-500">
-                  Processed on {new Date(uploadedBiomarkerData.timestamp).toLocaleString()}
+                  Processed on {new Date(uploadedBiomarkerData?.timestamp || '').toLocaleString()}
                 </p>
               </div>
                 <Badge variant="outline" className="text-xs self-start sm:self-center">
@@ -427,7 +453,7 @@ export default function EcoTownHealthDashboard() {
                 >
                 <h2>Health Insights</h2>
                 </motion.div>
-              <HealthInsights patientInfo={patientInfo} biomarkerData={biomarkerData} uploadedReportMetadata={uploadedBiomarkerData} />
+              <HealthInsights patientInfo={patientInfo} biomarkerData={biomarkerData} uploadedReportMetadata={uploadedBiomarkerData as unknown as { biomarkers: Record<string, unknown>; report_date?: string }} />
             </motion.div>
 
             <motion.div 

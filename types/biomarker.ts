@@ -7,11 +7,14 @@ export interface PatientInfo {
   reportDate?: string;  // Added for compatibility
 }
 
+export type BiomarkerStatus = "Normal" | "Low" | "High" | "Critical" | "Unknown";
+export type BiomarkerTrend = "stable" | "improving" | "declining";
+
 export interface BiomarkerValue {
-  value: number;
+  value: number | null; // Allow null for values that cannot be parsed
   unit: string;
-  status: string;
-  trend: string;
+  status: BiomarkerStatus;
+  trend: BiomarkerTrend;
   date: string;
   referenceRange: {
     min: number;
@@ -29,9 +32,9 @@ export interface BiomarkerData {
   clinicalSignificance?: string;
   recommendations?: string[];
   // Add these for direct value access
-  value?: number;
+  value?: number | null; // Allow null for values that cannot be parsed
   unit?: string;
-  status?: string;
+  status?: BiomarkerStatus;
   referenceRange?: {
     min: number;
     max: number;
@@ -43,7 +46,7 @@ export interface BiomarkerData {
 export interface ChartDataPoint {
   date: string;
   value: number; // Must be a number for chart rendering
-  status: string;
+  status: BiomarkerStatus;
   formattedDate?: string; // Optional: if needed for XAxis or tooltips
 }
 
